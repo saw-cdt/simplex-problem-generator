@@ -1,0 +1,17 @@
+{
+  "name": "simplex-desktop",
+  "version": "1.0.0",
+  "description": "Linear Programming Application using Simplex Method",
+  "scripts": {
+    "install:all": "npm install && cd frontend && npm install && cd ../electron && npm install",
+    "start:frontend": "cd frontend && npm run dev",
+    "start:electron": "cd electron && npm start",
+    "dev": "concurrently \"npm run start:frontend\" \"npm run start:electron\"",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "cd electron && npm run build",
+    "build:app": "npm run build:frontend && npm run build:electron"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

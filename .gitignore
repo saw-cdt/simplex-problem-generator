@@ -1,0 +1,13 @@
+node_modules/
+__pycache__/
+*.pyc
+backend/venv/
+backend/build/
+backend/*.spec
+electron/dist-app/
+electron/node_modules/
+electron/frontend-dist/
+frontend/dist/
+frontend/node_modules/
+.DS_Store
+*.log
