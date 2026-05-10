@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Play, Download, AlertTriangle, CheckCircle, Calculator, FileText, Plus, Trash2, ChevronRight, Sun, Moon, GraduationCap } from 'lucide-react';
+import { Settings, Play, Download, AlertTriangle, CheckCircle, Calculator, FileText, Plus, Trash2, ChevronRight, Sun, Moon, Save, FileDown, Trash } from 'lucide-react';
 
 const getVariableName = (index, totalVars) => {
   return `x${index + 1}`;
@@ -43,19 +43,6 @@ const NumInput = ({ value, onChange, width = 64 }) => (
   />
 );
 
-const TextInput = ({ value, onChange, placeholder, width = '100%' }) => (
-  <input
-    type="text" value={value} onChange={onChange} placeholder={placeholder}
-    style={{
-      width, background: 'var(--bg-input)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-sm)', padding: '7px 12px', color: 'var(--text-primary)',
-      fontSize: '13px', outline: 'none', transition: 'border-color 0.15s'
-    }}
-    onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-    onBlur={e => e.target.style.borderColor = 'var(--border)'}
-  />
-);
-
 const Card = ({ children, style = {} }) => (
   <div style={{
     background: 'var(--bg-surface)', border: '1px solid var(--border)',
@@ -90,6 +77,8 @@ const Divider = () => (
   <div style={{ height: 1, background: 'var(--border-subtle)', margin: '4px 0' }} />
 );
 
+const API = 'http://localhost:8000/api';
+
 function App() {
   const [isDark, setIsDark] = useState(true);
 
@@ -105,10 +94,7 @@ function App() {
     num_restricciones: 3
   });
 
-  const [examInfo, setExamInfo] = useState({
-    nombre: '',
-    matricula: ''
-  });
+  const [instrucciones, setInstrucciones] = useState('');
 
   const [objectiveCoeffs, setObjectiveCoeffs] = useState([3, 5]);
 
@@ -121,14 +107,28 @@ function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
+  const [savedProblems, setSavedProblems] = useState([]);
+  const [savingProblem, setSavingProblem] = useState(false);
+  const [generatingExam, setGeneratingExam] = useState(false);
+  const [examResult, setExamResult] = useState(null);
+
+  useEffect(() => {
+    fetchSavedProblems();
+  }, []);
+
+  const fetchSavedProblems = async () => {
+    try {
+      const res = await fetch(`${API}/examen/problemas`);
+      if (res.ok) {
+        const data = await res.json();
+        setSavedProblems(data.problemas || []);
+      }
+    } catch {}
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData({ ...formData, [name]: value });
-  };
-
-  const handleExamInfoChange = (e) => {
-    const { name, value } = e.target;
-    setExamInfo({ ...examInfo, [name]: value });
   };
 
   const handleObjectiveCoeffChange = (index, value) => {
@@ -191,12 +191,13 @@ function App() {
   };
 
   const generateProblem = async () => {
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setResult(null); setExamResult(null);
     
     const requestPayload = { 
       ...formData,
       num_variables: Number(formData.num_variables),
-      num_restricciones: Number(formData.num_restricciones)
+      num_restricciones: Number(formData.num_restricciones),
+      instrucciones: instrucciones,
     };
     
     if (formData.tipo_restricciones === 'fijas') {
@@ -205,7 +206,7 @@ function App() {
     }
     
     try {
-      const res = await fetch('http://localhost:8000/api/generate', {
+      const res = await fetch(`${API}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestPayload),
@@ -219,11 +220,67 @@ function App() {
     }
   };
 
+  const saveProblem = async () => {
+    if (!result) return;
+    setSavingProblem(true);
+    try {
+      const res = await fetch(`${API}/examen/guardar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: formData, result: result }),
+      });
+      if (res.ok) {
+        await fetchSavedProblems();
+      }
+    } catch (e) {
+      setError('Error al guardar el problema');
+    } finally {
+      setSavingProblem(false);
+    }
+  };
+
+  const generateExam = async () => {
+    setGeneratingExam(true); setError(null); setExamResult(null);
+    try {
+      const res = await fetch(`${API}/examen/generar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instrucciones }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Error al generar el examen");
+      }
+      setExamResult(await res.json());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGeneratingExam(false);
+    }
+  };
+
+  const clearProblems = async () => {
+    try {
+      await fetch(`${API}/examen/limpiar`, { method: 'DELETE' });
+      await fetchSavedProblems();
+      setExamResult(null);
+    } catch {}
+  };
+
+  const deleteProblem = async (id) => {
+    try {
+      await fetch(`${API}/examen/problemas/${id}`, { method: 'DELETE' });
+      await fetchSavedProblems();
+    } catch {}
+  };
+
   const downloadPDF = () => {
-    if (!result?.pdf_base64) return;
+    const src = examResult?.pdf_base64 || result?.pdf_base64;
+    if (!src) return;
+    const filename = examResult ? 'examen_completo.pdf' : 'problema_examen.pdf';
     const a = document.createElement('a');
-    a.href = `data:application/pdf;base64,${result.pdf_base64}`;
-    a.download = 'problema_examen.pdf';
+    a.href = `data:application/pdf;base64,${src}`;
+    a.download = filename;
     a.click();
   };
 
@@ -275,6 +332,9 @@ function App() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {savedProblems.length > 0 && (
+              <Badge color="var(--accent)">{savedProblems.length} guardado{savedProblems.length !== 1 ? 's' : ''}</Badge>
+            )}
             <Badge color="var(--accent)">v2.0</Badge>
             <button
               onClick={() => setIsDark(d => !d)}
@@ -479,6 +539,28 @@ function App() {
                 </>
               )}
 
+              <Divider />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <Label>Instrucciones del Examen</Label>
+                <textarea
+                  value={instrucciones}
+                  onChange={(e) => setInstrucciones(e.target.value)}
+                  placeholder="Ej: Resuelve los siguientes problemas usando el Método Simplex. Muestra todas las tablas de iteración."
+                  rows={3}
+                  style={{
+                    width: '100%', background: 'var(--bg-input)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)', padding: '10px 12px',
+                    color: 'var(--text-primary)', fontSize: '13px',
+                    outline: 'none', resize: 'vertical',
+                    fontFamily: 'inherit', transition: 'border-color 0.15s'
+                  }}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                />
+              </div>
+
               <button
                 onClick={generateProblem}
                 disabled={loading}
@@ -505,6 +587,78 @@ function App() {
                 }
                 {loading ? 'Procesando…' : 'Generar Problema'}
               </button>
+
+              {savedProblems.length > 0 && (
+                <>
+                  <Divider />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Label>{savedProblems.length} problema{savedProblems.length !== 1 ? 's' : ''} guardado{savedProblems.length !== 1 ? 's' : ''}</Label>
+                      <button
+                        onClick={clearProblems}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 4,
+                          background: 'transparent', border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-sm)', padding: '4px 10px',
+                          color: 'var(--text-muted)', fontSize: 11, fontWeight: 500,
+                          cursor: 'pointer', transition: 'all 0.15s'
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                      >
+                        <Trash size={12} /> Limpiar
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                      {savedProblems.map((p) => (
+                        <div key={p.id} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--border-subtle)', padding: '8px 12px',
+                          fontSize: 12, color: 'var(--text-secondary)'
+                        }}>
+                          <span>Problema #{savedProblems.indexOf(p) + 1} — {p.data?.funcion_objetivo?.string_repr?.substring(0, 40) || '...'}</span>
+                          <button
+                            onClick={() => deleteProblem(p.id)}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer',
+                              color: 'var(--text-muted)', padding: 2, borderRadius: 4
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--red)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={generateExam}
+                      disabled={generatingExam}
+                      style={{
+                        marginTop: 4, width: '100%', display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', gap: 8,
+                        background: generatingExam ? '#2d5a3c' : 'var(--green)',
+                        border: 'none', borderRadius: 'var(--radius)', padding: '10px 18px',
+                        color: '#fff', fontSize: 14, fontWeight: 600,
+                        cursor: generatingExam ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      {generatingExam
+                        ? <div style={{
+                            width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)',
+                            borderTopColor: '#fff', borderRadius: '50%',
+                            animation: 'spin 0.7s linear infinite'
+                          }} />
+                        : <FileDown size={15} />
+                      }
+                      {generatingExam ? 'Generando…' : 'Generar Examen Completo'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </Card>
 
@@ -522,7 +676,7 @@ function App() {
               </div>
             )}
 
-            {!result && !loading && !error && (
+            {!result && !examResult && !loading && !error && !generatingExam && (
               <Card style={{ minHeight: 480 }}>
                 <div style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -546,20 +700,74 @@ function App() {
               </Card>
             )}
 
-            {result && !loading && (
+            {examResult && !generatingExam && (
+              <Card>
+                <CardHeader>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <CheckCircle size={15} color="var(--green)" />
+                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
+                      Examen Completo — {examResult.total_problemas} problema{examResult.total_problemas !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {examResult.pdf_base64 && (
+                      <button onClick={downloadPDF} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        background: 'var(--accent-subtle)', border: '1px solid var(--accent-border)',
+                        borderRadius: 'var(--radius-sm)', padding: '6px 12px',
+                        color: 'var(--accent)', fontSize: 12, fontWeight: 500,
+                        cursor: 'pointer', transition: 'all 0.15s'
+                      }}>
+                        <Download size={13} /> Descargar PDF
+                      </button>
+                    )}
+                  </div>
+                </CardHeader>
+                <div style={{ padding: 4 }}>
+                  <pre style={{
+                    margin: 0, padding: '18px 20px',
+                    background: 'var(--bg-base)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 12.5, lineHeight: 1.7,
+                    color: '#a5b4d4', overflowX: 'auto',
+                    borderRadius: 'var(--radius)',
+                    whiteSpace: 'pre-wrap'
+                  }}>
+                    <code>{examResult.latex_code}</code>
+                  </pre>
+                </div>
+              </Card>
+            )}
+
+            {result && !loading && !examResult && (
               <>
                 <Card>
                   <CardHeader>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <CheckCircle size={15} color="var(--green)" />
                       <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
-                        Examen Generado
+                        Problema Generado
                       </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Badge color={solucionColors[formData.tipo_solucion]}>
                         {solucionLabels[formData.tipo_solucion]}
                       </Badge>
+                      <button
+                        onClick={saveProblem}
+                        disabled={savingProblem}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          background: 'var(--green-subtle)', border: '1px solid var(--green-border)',
+                          borderRadius: 'var(--radius-sm)', padding: '6px 12px',
+                          color: 'var(--green)', fontSize: 12, fontWeight: 500,
+                          cursor: savingProblem ? 'not-allowed' : 'pointer',
+                          opacity: savingProblem ? 0.7 : 1,
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        <Save size={13} /> {savingProblem ? 'Guardando…' : 'Guardar'}
+                      </button>
                       {result.pdf_base64 && (
                         <button
                           onClick={downloadPDF}

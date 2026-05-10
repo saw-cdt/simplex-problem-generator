@@ -1,98 +1,147 @@
 from ..models.generator_models import ObjectiveFunction, Constraint
 
+
 def get_variable_name_latex(index: int) -> str:
     return f"x_{{{index + 1}}}"
+
 
 def formatear_termino_latex(coef: float, var: str, is_first: bool = False) -> str:
     if coef == 0:
         return ""
-    
+
     coef_val = int(coef) if coef == int(coef) else round(coef, 2)
     abs_coef = abs(coef_val)
-    
     coef_str = "" if abs_coef == 1 else str(abs_coef)
-    
+
     if is_first:
         return f"-{coef_str}{var}" if coef < 0 else f"{coef_str}{var}"
     else:
         sign = " - " if coef < 0 else " + "
         return f"{sign}{coef_str}{var}"
 
-def problem_to_latex(obj: ObjectiveFunction, restricciones: list[Constraint],
-                     num_variables: int = 2, nombre: str = "", matricula: str = "") -> str:
-    lines = []
-    
-    lines.append(r"\begin{center}")
-    lines.append(r"\textbf{\Large EXAMEN DE PROGRAMACIÓN LINEAL}")
-    lines.append(r"\end{center}")
-    lines.append(r"\vspace{0.3cm}")
-    
-    lines.append(r"\begin{center}")
-    lines.append(r"\begin{tabular}{p{0.4\linewidth} p{0.4\linewidth}}")
-    lines.append(r"\textbf{Nombre:} \underline{\hspace{5cm}} & \textbf{Matrícula:} \underline{\hspace{4cm}} \\")
-    lines.append(r"\end{tabular}")
-    lines.append(r"\end{center}")
-    lines.append(r"\vspace{0.5cm}")
-    
-    lines.append(r"\textbf{Función Objetivo:}")
-    lines.append(r"\vspace{0.2cm}")
-    
+
+def _build_objective_math(obj, num_vars):
     terms = []
     for i, coef in enumerate(obj.coeficientes):
         if coef != 0:
             var = get_variable_name_latex(i)
             is_first = len(terms) == 0
             terms.append(formatear_termino_latex(coef, var, is_first=is_first))
-    
-    if not terms:
-        right_side = "0"
+
+    right_side = "".join(terms) if terms else "0"
+    tipo_str = r"\text{Maximizar}" if obj.tipo.lower() == "max" else r"\text{Minimizar}"
+    return f"${tipo_str}\\quad Z = {right_side}$"
+
+
+def _build_constraint_item(rest, n_vars):
+    op_map = {"<=": r"\leq", ">=": r"\geq", "=": "="}
+    terms = []
+    for i, coef in enumerate(rest.coeficientes):
+        if i >= n_vars:
+            break
+        if coef != 0:
+            var = get_variable_name_latex(i)
+            is_first = len(terms) == 0
+            terms.append(formatear_termino_latex(coef, var, is_first=is_first))
+
+    left = "".join(terms) if terms else "0"
+    val = int(rest.valor) if rest.valor == int(rest.valor) else round(rest.valor, 2)
+    op_latex = op_map.get(rest.operador, rest.operador)
+    return f"$\\displaystyle {left} {op_latex} {val}$"
+
+
+def _exam_header(instrucciones=""):
+    lines = []
+
+    lines.append(r"\begin{center}")
+    lines.append(r"{\LARGE\textbf{EXAMEN DE PROGRAMACI\'ON LINEAL}}")
+    lines.append(r"\vspace{1cm}")
+    lines.append(r"\begin{tabular}{rl}")
+    lines.append(r"\textbf{Nombre:}    & \underline{\hspace{8cm}} \\[0.4cm]")
+    lines.append(r"\textbf{Matr\'icula:} & \underline{\hspace{8cm}} \\[0.4cm]")
+    lines.append(r"\textbf{Aula:}      & \underline{\hspace{8cm}}")
+    lines.append(r"\end{tabular}")
+    lines.append(r"\end{center}")
+
+    if instrucciones.strip():
+        lines.append(r"\vspace{0.5cm}")
+        lines.append(r"\noindent\textbf{Instrucciones:}")
+        lines.append(r"")
+        lines.append(r"\noindent " + instrucciones)
+
+    return lines
+
+
+def _problem_body(obj, restricciones, num_vars, numero_problema=None):
+    lines = []
+
+    if numero_problema is not None:
+        lines.append(r"\vspace{0.5cm}")
+        lines.append(r"\hrule")
+        lines.append(r"\vspace{0.4cm}")
+        lines.append(r"\textbf{Problema " + str(numero_problema) + r"}")
+        lines.append(r"\vspace{0.3cm}")
     else:
-        right_side = "".join(terms)
-    
-    tipo_str = r"\textbf{Maximizar }" if obj.tipo.lower() == "max" else r"\textbf{Minimizar }"
+        lines.append(r"\vspace{0.6cm}")
+        lines.append(r"\hrule")
+        lines.append(r"\vspace{0.5cm}")
+
     lines.append(r"\begin{center}")
-    lines.append(f"{tipo_str}$Z = {right_side}$")
+    lines.append(_build_objective_math(obj, num_vars))
     lines.append(r"\end{center}")
-    lines.append(r"\vspace{0.8cm}")
-    
-    lines.append(r"\textbf{Restricciones:}")
-    lines.append(r"\vspace{0.2cm}")
+    lines.append(r"\vspace{0.4cm}")
+
+    lines.append(r"\noindent\textbf{Sujeto a:}")
+    lines.append(r"")
     lines.append(r"\begin{enumerate}")
-    lines.append(r"\setlength{\itemsep}{0.3cm}")
-    
+    lines.append(r"\setlength{\itemsep}{2pt}")
+    lines.append(r"\setlength{\leftmargin}{2cm}")
+
     for rest in restricciones:
-        terms_r = []
-        for i, coef in enumerate(rest.coeficientes):
-            if coef != 0:
-                var = get_variable_name_latex(i)
-                is_first = len(terms_r) == 0
-                terms_r.append(formatear_termino_latex(coef, var, is_first=is_first))
-        
-        if not terms_r:
-            left_r = "0"
-        else:
-            left_r = "".join(terms_r)
-        
-        val = int(rest.valor) if rest.valor == int(rest.valor) else round(rest.valor, 2)
-        
-        op_map = {"<=": r"\leq", ">=": r"\geq", "=": "="}
-        op_latex = op_map.get(rest.operador, rest.operador)
-        
-        lines.append(r"\item $")
-        lines.append(f"{left_r} {op_latex} {val}")
-        lines.append(r"$")
-    
+        lines.append(r"\item " + _build_constraint_item(rest, num_vars))
+
     lines.append(r"\end{enumerate}")
-    lines.append(r"\vspace{0.5cm}")
-    
-    lines.append(r"\textbf{Restricciones de no negatividad:}")
-    lines.append(r"\vspace{0.2cm}")
-    lines.append(r"\begin{center}")
-    
-    var_names = [get_variable_name_latex(i) for i in range(num_variables)]
-    nn_str = ", ".join(var_names) + r" \geq 0"
-    lines.append(f"${nn_str}$")
-    
-    lines.append(r"\end{center}")
-    
+    lines.append(r"\vspace{0.3cm}")
+
+    nn_vars = ", ".join([get_variable_name_latex(i) for i in range(num_vars)])
+    lines.append(r"\noindent$" + nn_vars + r" \geq 0$")
+
+    return lines
+
+
+def problem_to_latex(obj: ObjectiveFunction, restricciones: list[Constraint],
+                     num_variables: int = 2, nombre: str = "", matricula: str = "",
+                     aula: str = "", instrucciones: str = "",
+                     numero_problema: int = 1) -> str:
+    lines = _exam_header(instrucciones)
+    lines.extend(_problem_body(obj, restricciones, num_variables))
+    return "\n".join(lines)
+
+
+def problems_to_latex_exam(problemas: list[dict], instrucciones: str = "") -> str:
+    lines = _exam_header(instrucciones)
+
+    for idx, prob in enumerate(problemas):
+        num = idx + 1
+        obj = prob.get('funcion_objetivo', {})
+        restricciones = prob.get('restricciones', [])
+        num_vars = prob.get('num_variables', 2)
+
+        rest_objs = []
+        for r in restricciones:
+            rest_objs.append(Constraint(
+                coeficientes=r.get('coeficientes', []),
+                operador=r.get('operador', '<='),
+                valor=r.get('valor', 0),
+                string_repr=""
+            ))
+
+        obj_model = ObjectiveFunction(
+            tipo=obj.get('tipo', 'max'),
+            coeficientes=obj.get('coeficientes', []),
+            string_repr=""
+        )
+
+        lines.extend(_problem_body(obj_model, rest_objs, num_vars, num))
+
     return "\n".join(lines)

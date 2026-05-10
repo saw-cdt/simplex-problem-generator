@@ -26,6 +26,7 @@
 
   --green:         #34d399;
   --green-subtle:  rgba(52, 211, 153, 0.08);
+  --green-border:  rgba(52, 211, 153, 0.25);
 
   --red:           #f87171;
   --red-subtle:    rgba(248, 113, 113, 0.08);
@@ -61,6 +62,7 @@
 
   --green:         #059669;
   --green-subtle:  rgba(5, 150, 105, 0.07);
+  --green-border:  rgba(5, 150, 105, 0.2);
 
   --red:           #dc2626;
   --red-subtle:    rgba(220, 38, 38, 0.06);

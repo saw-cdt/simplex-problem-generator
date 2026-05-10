@@ -1,6 +1,7 @@
 import random
 import numpy as np
 from ..models.generator_models import GenerateRequest, GenerateResponse, ObjectiveFunction, Constraint
+from .simplex_service import verify_solution_type, classify_problem_manual
 
 
 # ── Formatting utilities (unchanged) ──────────────────────────────────────────
@@ -54,7 +55,9 @@ def create_constraint(coefs: list[float], op: str, val: float) -> Constraint:
 
 def format_response(tipo: str, coefs_obj: list[float], constraints_raw: list,
                     num_vars: int, num_res: int, exp: str,
-                    nombre: str = "", matricula: str = "") -> GenerateResponse:
+                    nombre: str = "", matricula: str = "",
+                    aula: str = "", instrucciones: str = "",
+                    numero_problema: int = 1) -> GenerateResponse:
     obj_fun = ObjectiveFunction(
         tipo=tipo, coeficientes=coefs_obj,
         string_repr=build_obj_string(tipo, coefs_obj)
@@ -65,7 +68,8 @@ def format_response(tipo: str, coefs_obj: list[float], constraints_raw: list,
     from .latex_service import problem_to_latex
     from .pdf_service import generate_pdf_from_latex
 
-    latex_str = problem_to_latex(obj_fun, constraints, num_vars, nombre, matricula)
+    latex_str = problem_to_latex(obj_fun, constraints, num_vars, nombre, matricula,
+                                 aula, instrucciones, numero_problema)
 
     try:
         pdf_bytes = generate_pdf_from_latex(latex_str)
@@ -84,58 +88,25 @@ def format_response(tipo: str, coefs_obj: list[float], constraints_raw: list,
     )
 
 
-# ── SciPy utilities (for custom-constraint validation only) ──────────────────
-
-def build_constraint_matrices(constraints_raw: list) -> tuple:
-    A_ub, b_ub = [], []
-    A_eq, b_eq = [], []
-
-    for coefs, op, val in constraints_raw:
-        if op == "<=":
-            A_ub.append(coefs)
-            b_ub.append(val)
-        elif op == ">=":
-            A_ub.append([-c for c in coefs])
-            b_ub.append(-val)
-        elif op == "=":
-            A_eq.append(coefs)
-            b_eq.append(val)
-
-    return (
-        A_ub if A_ub else None,
-        b_ub if b_ub else None,
-        A_eq if A_eq else None,
-        b_eq if b_eq else None,
-    )
-
-
 def validate_custom_problem(tipo: str, coefs_obj: list[float],
                             constraints_raw: list) -> tuple:
-    A_ub, b_ub, A_eq, b_eq = build_constraint_matrices(constraints_raw)
-    c_opt = [-c for c in coefs_obj] if tipo == "max" else coefs_obj
-    res = linprog(c_opt, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
-                  bounds=(0, None), method='highs')
+    A, b, ops = _extract_matrices(constraints_raw)
+    result = classify_problem_manual(coefs_obj, A, b, ops, tipo)
 
-    if res.status == 2:
+    tipo_detectado = result['tipo_solucion']
+    opt_val = result.get('optimal_value')
+    vars_val = result.get('variables')
+
+    if tipo_detectado in ('multiple', 'unica'):
+        details = f"Óptimo: {opt_val:.2f}"
+        if vars_val:
+            details += f", variables: {vars_val}"
+        return tipo_detectado, details
+    elif tipo_detectado == 'sin_solucion':
         return "sin_solucion", "Infactible"
-    elif res.status == 3:
+    elif tipo_detectado == 'no_acotada':
         return "no_acotada", "No acotada"
-    elif res.status == 0:
-        es_multiple = False
-        if res.slack is not None and A_ub is not None:
-            for i, slack_val in enumerate(res.slack):
-                if np.isclose(slack_val, 0):
-                    a = A_ub[i]
-                    s = sum(a[j] * coefs_obj[j] for j in range(len(coefs_obj)))
-                    if abs(s) < 1e-6:
-                        es_multiple = True
-                        break
-        if es_multiple:
-            return "multiple", f"Óptimo: {res.fun * (-1 if tipo == 'max' else 1):.2f}"
-        else:
-            return "unica", (f"Óptimo: {res.fun * (-1 if tipo == 'max' else 1):.2f}, "
-                             f"variables: {res.x.tolist()}")
-    return "error", f"Error del solver: {res.message}"
+    return "error", "Error del solver manual"
 
 
 # ── Randomized helpers (structure deterministic, values random) ───────────────
@@ -210,85 +181,26 @@ def _ensure_all_ops(result, orig_coefs, orig_vals, eq_mask, x_star, m):
     return result
 
 
-def _is_parallel(a, c):
-    """Check if vectors a and c are parallel (a = λ*c for some λ)."""
-    for i in range(len(a)):
-        for j in range(i + 1, len(a)):
-            if abs(a[i] * c[j] - a[j] * c[i]) > 1e-6:
-                return False
-    return True
-
-
-def _verify_scipy(coefs_obj, constraints_raw, tipo, expected_sol):
-    """Verify with SciPy that the solution type matches expected. Returns bool."""
-    try:
-        from scipy.optimize import linprog
-    except ImportError:
-        return True
-
-    A_ub, b_ub = [], []
-    A_eq, b_eq = [], []
+def _extract_matrices(constraints_raw):
+    A, b, ops = [], [], []
     for coefs, op, val in constraints_raw:
-        if op == "<=":
-            A_ub.append(coefs)
-            b_ub.append(val)
-        elif op == ">=":
-            A_ub.append([-c for c in coefs])
-            b_ub.append(-val)
-        elif op == "=":
-            A_eq.append(coefs)
-            b_eq.append(val)
+        A.append(list(coefs))
+        b.append(val)
+        ops.append(op)
+    return A, b, ops
 
-    c_opt = [-c for c in coefs_obj] if tipo == "max" else coefs_obj
-    res = linprog(c_opt,
-                  A_ub=A_ub if A_ub else None,
-                  b_ub=b_ub if b_ub else None,
-                  A_eq=A_eq if A_eq else None,
-                  b_eq=b_eq if b_eq else None,
-                  bounds=(0, None), method='highs')
 
-    expected_status_map = {
-        "unica": 0, "multiple": 0,
-        "sin_solucion": 2, "no_acotada": 3,
-    }
-    expected = expected_status_map[expected_sol]
-
-    if res.status != expected:
-        return False
-
-    if expected_sol == "unica":
-        # Must NOT be multiple (objective NOT parallel to any active constraint)
-        if res.slack is not None and A_ub is not None:
-            for i, sv in enumerate(res.slack):
-                if np.isclose(sv, 0):
-                    a = A_ub[i]
-                    if _is_parallel(a, coefs_obj):
-                        return False
-        if A_eq is not None:
-            for a in A_eq:
-                if _is_parallel(a, coefs_obj):
-                    return False
-        return True
-
-    if expected_sol == "multiple":
-        if res.slack is not None and A_ub is not None:
-            for i, sv in enumerate(res.slack):
-                if np.isclose(sv, 0):
-                    a = A_ub[i]
-                    if _is_parallel(a, coefs_obj):
-                        return True
-        if A_eq is not None:
-            for a in A_eq:
-                if _is_parallel(a, coefs_obj):
-                    return True
-        return False
-
-    return True
+def _verify_simplex(coefs_obj, constraints_raw, tipo, expected_sol):
+    """Verify with manual Simplex that the solution type matches expected."""
+    A, b, ops = _extract_matrices(constraints_raw)
+    return verify_solution_type(coefs_obj, A, b, ops, tipo, expected_sol)
 
 
 # ── Deterministic builders (one per solution type) ────────────────────────────
 
-def _build_unique(tipo: str, n: int, m: int) -> GenerateResponse:
+def _build_unique(tipo: str, n: int, m: int,
+                  nombre: str = "", matricula: str = "",
+                  aula: str = "", instrucciones: str = "") -> GenerateResponse:
     """KKT-guaranteed unique optimum via n independent active normals."""
     normals = _random_normals(n)
     active = min(n, m)
@@ -342,14 +254,17 @@ def _build_unique(tipo: str, n: int, m: int) -> GenerateResponse:
             eq_mask, x_star, m
         )
 
-        if _verify_scipy(c_obj, constraints_raw, tipo, "unica"):
+        if _verify_simplex(c_obj, constraints_raw, tipo, "unica"):
             break
 
     return format_response(tipo, c_obj, constraints_raw, n, m,
-        "Construido determinísticamente (Solución Única). KKT garantiza optimalidad única.")
+        "Construido determinísticamente (Solución Única). KKT garantiza optimalidad única.",
+        nombre, matricula, aula, instrucciones)
 
 
-def _build_multiple(tipo: str, n: int, m: int) -> GenerateResponse:
+def _build_multiple(tipo: str, n: int, m: int,
+                    nombre: str = "", matricula: str = "",
+                    aula: str = "", instrucciones: str = "") -> GenerateResponse:
     """Objective parallel to one active constraint → infinite optima on a face."""
     normals = _random_normals(n)
     parallel_idx = random.randint(0, min(n - 1, max(0, m - 1)))
@@ -390,15 +305,18 @@ def _build_multiple(tipo: str, n: int, m: int) -> GenerateResponse:
             eq_mask, x_star, m
         )
 
-        if _verify_scipy(c_obj, constraints_raw, tipo, "multiple"):
+        if _verify_simplex(c_obj, constraints_raw, tipo, "multiple"):
             break
 
     return format_response(tipo, c_obj, constraints_raw, n, m,
         "Construido determinísticamente (Múltiples Soluciones). "
-        "Función objetivo paralela a una restricción activa.")
+        "Función objetivo paralela a una restricción activa.",
+        nombre, matricula, aula, instrucciones)
 
 
-def _build_infeasible(tipo: str, n: int, m: int) -> GenerateResponse:
+def _build_infeasible(tipo: str, n: int, m: int,
+                      nombre: str = "", matricula: str = "",
+                      aula: str = "", instrucciones: str = "") -> GenerateResponse:
     """Provably infeasible: contradictory constraints with the same coefficients."""
     c_obj = [float(random.randint(1, 5)) for _ in range(n)]
     c_obj = _apply_obj_type(tipo, c_obj)
@@ -463,15 +381,18 @@ def _build_infeasible(tipo: str, n: int, m: int) -> GenerateResponse:
             eq_mask, x_star, m
         )
 
-        if _verify_scipy(c_obj, constraints_raw, tipo, "sin_solucion"):
+        if _verify_simplex(c_obj, constraints_raw, tipo, "sin_solucion"):
             break
 
     return format_response(tipo, c_obj, constraints_raw, n, m,
         "Construido determinísticamente (Infactible). "
-        "Restricciones contradictorias garantizan región vacía.")
+        "Restricciones contradictorias garantizan región vacía.",
+        nombre, matricula, aula, instrucciones)
 
 
-def _build_unbounded(tipo: str, n: int, m: int) -> GenerateResponse:
+def _build_unbounded(tipo: str, n: int, m: int,
+                     nombre: str = "", matricula: str = "",
+                     aula: str = "", instrucciones: str = "") -> GenerateResponse:
     """Only >= constraints → region open toward positive direction → unbounded."""
     c_obj = [float(random.randint(1, 5)) for _ in range(n)]
     c_obj = _apply_obj_type(tipo, c_obj)
@@ -514,15 +435,18 @@ def _build_unbounded(tipo: str, n: int, m: int) -> GenerateResponse:
             eq_mask, x_star, m
         )
 
-        if _verify_scipy(c_obj, constraints_raw, tipo, "no_acotada"):
+        if _verify_simplex(c_obj, constraints_raw, tipo, "no_acotada"):
             break
 
     return format_response(tipo, c_obj, constraints_raw, n, m,
         "Construido determinísticamente (No Acotada). "
-        "Sin cotas superiores en la dirección del gradiente.")
+        "Sin cotas superiores en la dirección del gradiente.",
+        nombre, matricula, aula, instrucciones)
 
 
-def _build_deterministic(tipo: str, sol: str, n: int, m: int) -> GenerateResponse:
+def _build_deterministic(tipo: str, sol: str, n: int, m: int,
+                         nombre: str = "", matricula: str = "",
+                         aula: str = "", instrucciones: str = "") -> GenerateResponse:
     """Dispatch to the correct deterministic builder."""
     builders = {
         "unica": _build_unique,
@@ -530,12 +454,10 @@ def _build_deterministic(tipo: str, sol: str, n: int, m: int) -> GenerateRespons
         "sin_solucion": _build_infeasible,
         "no_acotada": _build_unbounded,
     }
-    return builders[sol](tipo, n, m)
+    return builders[sol](tipo, n, m, nombre, matricula, aula, instrucciones)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-
-from scipy.optimize import linprog  # kept for validate_custom_problem only
 
 
 def generate_mock_problem(request: GenerateRequest) -> GenerateResponse:
@@ -545,8 +467,9 @@ def generate_mock_problem(request: GenerateRequest) -> GenerateResponse:
     num_res = request.num_restricciones
     nombre = request.nombre
     matricula = request.matricula
+    aula = request.aula if hasattr(request, 'aula') else ""
+    instrucciones = request.instrucciones if hasattr(request, 'instrucciones') else ""
 
-    # ── Custom constraints: still validated with SciPy ───────────────────────
     if request.tipo_restricciones == "fijas" and request.restricciones_custom:
         if request.funcion_objetivo_custom:
             coefs_obj = request.funcion_objetivo_custom
@@ -562,8 +485,8 @@ def generate_mock_problem(request: GenerateRequest) -> GenerateResponse:
         )
         return format_response(
             tipo, coefs_obj, constraints_raw, num_vars, len(constraints_raw),
-            f"Custom: {detalles}", nombre, matricula
+            f"Custom: {detalles}", nombre, matricula, aula, instrucciones
         )
 
-    # ── Deterministic generation (replaces random + scipy verification) ──────
-    return _build_deterministic(tipo, sol, num_vars, num_res)
+    return _build_deterministic(tipo, sol, num_vars, num_res,
+                                nombre, matricula, aula, instrucciones)

@@ -18,6 +18,8 @@ class GenerateRequest(BaseModel):
     
     nombre: str = ""
     matricula: str = ""
+    aula: str = ""
+    instrucciones: str = ""
 
 class ObjectiveFunction(BaseModel):
     tipo: Literal["max", "min"]

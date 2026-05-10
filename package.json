@@ -1,17 +1,11 @@
 {
-  "name": "simplex-desktop",
+  "name": "simplex-exam",
   "version": "1.0.0",
-  "description": "Linear Programming Application using Simplex Method",
+  "description": "Linear Programming Exam Generator using Simplex Method",
   "scripts": {
-    "install:all": "npm install && cd frontend && npm install && cd ../electron && npm install",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
     "start:frontend": "cd frontend && npm run dev",
-    "start:electron": "cd electron && npm start",
-    "dev": "concurrently \"npm run start:frontend\" \"npm run start:electron\"",
-    "build:frontend": "cd frontend && npm run build",
-    "build:electron": "cd electron && npm run build",
-    "build:app": "npm run build:frontend && npm run build:electron"
-  },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
+    "start:backend": "cd backend && python -m uvicorn app.main:app --reload --port 8000",
+    "dev": "npm run start:backend & npm run start:frontend"
   }
 }
